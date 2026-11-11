@@ -37,6 +37,11 @@
       <h2>Registrar DDS realizado</h2>
       <p class="dlg-tema"></p>
       <label>Data <input type="date" name="data" required></label>
+      <label>Empresa <input type="text" name="empresa" maxlength="120" list="lista-empresas" autocomplete="organization" placeholder="Razão social ou nome da empresa"></label>
+      <datalist id="lista-empresas"></datalist>
+      <label>CNPJ <span class="dica">— opcional</span>
+        <input type="text" name="cnpj" maxlength="18" inputmode="text" autocomplete="off" placeholder="00.000.000/0000-00" spellcheck="false" style="text-transform:uppercase">
+      </label>
       <label>Obra / frente de serviço <input type="text" name="obra" maxlength="120"></label>
       <label>Nº de participantes <input type="number" name="participantes" min="0" max="999" inputmode="numeric"></label>
       <label>Observações <textarea name="obs" rows="2" maxlength="500" placeholder="Dúvidas da turma, pontos levantados..."></textarea></label>

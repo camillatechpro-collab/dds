@@ -1,6 +1,6 @@
 // Service worker: guarda o app no aparelho para funcionar sem internet no canteiro.
 // Ao publicar uma nova versão (novos DDS, correções), aumente o número abaixo.
-const VERSAO = 'dds-diario-v3';
+const VERSAO = 'dds-diario-v4';
 const ARQUIVOS = [
   './',
   './index.html',

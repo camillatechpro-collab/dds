@@ -16,7 +16,44 @@
     },
     set(chave, valor) { localStorage.setItem('dds_' + chave, JSON.stringify(valor)); },
   };
-  const config = () => ({ empresa: '', obra: '', responsavel: '', linhas: 20, fonte: 19, ...store.get('config', {}) });
+  const config = () => ({ empresa: '', cnpj: '', obra: '', responsavel: '', linhas: 20, fonte: 19, ...store.get('config', {}) });
+
+  // ---------- CNPJ (numérico e alfanumérico, este último em vigor desde jul/2026) ----------
+  const limparCNPJ = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14);
+  function formatarCNPJ(v) {
+    const c = limparCNPJ(v);
+    return [c.slice(0, 2), c.slice(2, 5), c.slice(5, 8)].filter(Boolean).join('.')
+      + (c.length > 8 ? '/' + c.slice(8, 12) : '')
+      + (c.length > 12 ? '-' + c.slice(12) : '');
+  }
+  function cnpjValido(v) {
+    const c = limparCNPJ(v);
+    if (!/^[A-Z0-9]{12}\d{2}$/.test(c) || /^(.)\1+$/.test(c)) return false;
+    // Cada caractere vale (código ASCII − 48): dígitos 0–9, letras A=17 … Z=42. Pesos 2 a 9 da direita para a esquerda.
+    const dv = (base) => {
+      let soma = 0, peso = 2;
+      for (let i = base.length - 1; i >= 0; i--) { soma += (base.charCodeAt(i) - 48) * peso; peso = peso === 9 ? 2 : peso + 1; }
+      const resto = soma % 11;
+      return resto < 2 ? 0 : 11 - resto;
+    };
+    const d1 = dv(c.slice(0, 12));
+    const d2 = dv(c.slice(0, 12) + d1);
+    return c.slice(12) === `${d1}${d2}`;
+  }
+  function prepararCampoCNPJ(input) {
+    input.value = formatarCNPJ(input.value);
+    input.setCustomValidity(input.value && !cnpjValido(input.value) ? 'CNPJ inválido. Confira os números (e letras, se houver).' : '');
+  }
+  // Empresas já usadas (histórico + ajustes), com o CNPJ mais recente de cada uma.
+  function empresasConhecidas() {
+    const mapa = new Map();
+    const c = config();
+    if (c.empresa) mapa.set(c.empresa.toLowerCase(), { nome: c.empresa, cnpj: c.cnpj || '' });
+    [...historico()].sort((a, b) => a.data.localeCompare(b.data)).forEach((h) => {
+      if (h.empresa) mapa.set(h.empresa.toLowerCase(), { nome: h.empresa, cnpj: h.cnpj || mapa.get(h.empresa.toLowerCase())?.cnpj || '' });
+    });
+    return [...mapa.values()];
+  }
 
   // ---------- Utilidades ----------
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -123,10 +160,15 @@
   function imprimir(dds) {
     const c = config();
     const linhas = Math.min(Math.max(parseInt(c.linhas, 10) || 20, 5), 60);
+    // Empresa dos Ajustes; se não houver, a última usada no histórico.
+    const ultima = [...historico()].filter((h) => h.empresa).sort((a, b) => a.data.localeCompare(b.data)).pop();
+    const empresa = c.empresa || ultima?.empresa || '';
+    const cnpj = c.empresa ? c.cnpj : (ultima?.cnpj || '');
     const cab = `
       <table class="imp-cab">
         <tr><td colspan="4" class="imp-titulo">DDS — DIÁLOGO DIÁRIO DE SEGURANÇA</td></tr>
-        <tr><td><b>Empresa:</b> ${esc(c.empresa)}</td><td colspan="3"><b>Obra / frente:</b> ${esc(c.obra)}</td></tr>
+        <tr><td colspan="3"><b>Empresa:</b> ${esc(empresa)}</td><td><b>CNPJ:</b> ${esc(cnpj)}</td></tr>
+        <tr><td colspan="4"><b>Obra / frente:</b> ${esc(c.obra)}</td></tr>
         <tr><td><b>Data:</b> ____/____/______</td><td><b>Início:</b> ____:____</td><td><b>Término:</b> ____:____</td><td><b>Duração prevista:</b> ${esc(dds.duracao || 5)} min</td></tr>
         <tr><td colspan="2"><b>Tema:</b> ${esc(dds.titulo)}</td><td colspan="2"><b>Responsável:</b> ${esc(c.responsavel)}</td></tr>
       </table>`;
@@ -157,8 +199,22 @@
     const f = dlg.querySelector('form');
     f.reset();
     dlg.querySelector('.dlg-tema').textContent = dds.titulo;
+    const c = config();
     f.data.value = hojeISO();
-    f.obra.value = config().obra || '';
+    f.obra.value = c.obra || '';
+    // Sugere a última empresa usada (ou a dos Ajustes).
+    const ultimo = [...historico()].filter((h) => h.empresa).sort((a, b) => a.data.localeCompare(b.data)).pop();
+    f.empresa.value = ultimo?.empresa || c.empresa || '';
+    f.cnpj.value = ultimo ? (ultimo.cnpj || '') : (c.cnpj || '');
+    prepararCampoCNPJ(f.cnpj);
+    document.getElementById('lista-empresas').innerHTML = empresasConhecidas().map((e) => `<option value="${esc(e.nome)}">`).join('');
+    f.oninput = (e) => {
+      if (e.target.name === 'cnpj') prepararCampoCNPJ(e.target);
+      if (e.target.name === 'empresa') {
+        const achada = empresasConhecidas().find((x) => x.nome.toLowerCase() === e.target.value.trim().toLowerCase());
+        if (achada && achada.cnpj) { f.cnpj.value = achada.cnpj; prepararCampoCNPJ(f.cnpj); }
+      }
+    };
     f.onsubmit = (e) => {
       if (!e.submitter || e.submitter.value !== 'ok') return;
       const h = historico();
@@ -168,6 +224,8 @@
         titulo: dds.titulo,
         categoria: dds.categoria,
         data: f.data.value || hojeISO(),
+        empresa: f.empresa.value.trim(),
+        cnpj: formatarCNPJ(f.cnpj.value),
         obra: f.obra.value.trim(),
         participantes: f.participantes.value ? Number(f.participantes.value) : null,
         obs: f.obs.value.trim(),
@@ -390,11 +448,12 @@
       ${h.length ? `
         <div class="cartao" style="overflow-x:auto">
           <table class="tabela">
-            <thead><tr><th>Data</th><th>Tema</th><th>Obra</th><th>Part.</th><th></th></tr></thead>
+            <thead><tr><th>Data</th><th>Tema</th><th>Empresa</th><th>Obra</th><th>Part.</th><th></th></tr></thead>
             <tbody>${h.map((x) => `
               <tr>
                 <td>${esc(fmtData(x.data))}</td>
                 <td><a href="#/dds/${encodeURIComponent(x.id)}">${esc(x.titulo)}</a>${x.obs ? `<br><small class="dica">${esc(x.obs)}</small>` : ''}</td>
+                <td>${esc(x.empresa || '—')}${x.cnpj ? `<br><small class="dica">CNPJ ${esc(x.cnpj)}</small>` : ''}</td>
                 <td>${esc(x.obra)}</td>
                 <td>${x.participantes ?? '—'}</td>
                 <td><button class="btn perigo peq" data-acao="remover-hist" data-uid="${esc(x.uid)}" aria-label="Remover registro">✕</button></td>
@@ -411,6 +470,8 @@
       <form class="cartao" id="form-config">
         <h2 style="margin-top:0">Dados para o cabeçalho e a lista de presença</h2>
         <label>Empresa <input type="text" name="empresa" maxlength="120" value="${esc(c.empresa)}"></label>
+        <label>CNPJ <span class="dica">— opcional</span>
+          <input type="text" name="cnpj" id="cfg-cnpj" maxlength="18" autocomplete="off" spellcheck="false" placeholder="00.000.000/0000-00" style="text-transform:uppercase" value="${esc(c.cnpj)}"></label>
         <label>Obra / frente de serviço <input type="text" name="obra" maxlength="120" value="${esc(c.obra)}"></label>
         <label>Responsável pelo DDS <input type="text" name="responsavel" maxlength="120" value="${esc(c.responsavel)}"></label>
         <label>Linhas na lista de presença <input type="number" name="linhas" min="5" max="60" value="${esc(c.linhas)}"></label>
@@ -501,6 +562,7 @@
 
   $app.addEventListener('input', (e) => {
     if (e.target.id === 'f-busca') { filtroBib.busca = e.target.value; atualizarBiblioteca(); }
+    if (e.target.id === 'cfg-cnpj') prepararCampoCNPJ(e.target);
   });
   $app.addEventListener('change', (e) => {
     if (e.target.id === 'f-cat') { filtroBib.categoria = e.target.value; atualizarBiblioteca(); }
@@ -511,7 +573,7 @@
     if (e.target.id === 'form-dds') salvarFormulario(e.target);
     if (e.target.id === 'form-config') {
       const f = e.target.elements;
-      store.set('config', { ...config(), empresa: f.empresa.value.trim(), obra: f.obra.value.trim(), responsavel: f.responsavel.value.trim(), linhas: Number(f.linhas.value) || 20 });
+      store.set('config', { ...config(), empresa: f.empresa.value.trim(), cnpj: formatarCNPJ(f.cnpj.value), obra: f.obra.value.trim(), responsavel: f.responsavel.value.trim(), linhas: Number(f.linhas.value) || 20 });
       toast('Ajustes salvos ✓');
     }
   });
@@ -525,9 +587,9 @@
 
   function exportarCSV() {
     const cel = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const linhas = [['Data', 'Tema', 'Categoria', 'Obra', 'Participantes', 'Observações'].map(cel).join(';')];
+    const linhas = [['Data', 'Tema', 'Categoria', 'Empresa', 'CNPJ', 'Obra', 'Participantes', 'Observações'].map(cel).join(';')];
     [...historico()].sort((a, b) => a.data.localeCompare(b.data)).forEach((x) =>
-      linhas.push([fmtData(x.data), x.titulo, x.categoria, x.obra, x.participantes ?? '', x.obs].map(cel).join(';')));
+      linhas.push([fmtData(x.data), x.titulo, x.categoria, x.empresa, x.cnpj, x.obra, x.participantes ?? '', x.obs].map(cel).join(';')));
     baixar(`historico-dds-${hojeISO()}.csv`, '﻿' + linhas.join('\r\n'), 'text/csv;charset=utf-8');
   }
 
